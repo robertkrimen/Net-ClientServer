@@ -1,0 +1,21 @@
+#!/usr/bin/env perl
+use Dzpl
+    name => 'Net-ClientServer',
+    version => '0.0001',
+    author => 'Robert Krimen <robertkrimen@gmail.com>',
+    license => 'Perl5',
+    copyright => 'Robert Krimen',
+
+    require => q/
+        Any::Moose
+        Path::Class
+        Daemon::Daemonize
+        Net::Server
+
+        [Test]
+        Test::Most
+    /,
+;
+
+{ plugin '@ROKR' }
+

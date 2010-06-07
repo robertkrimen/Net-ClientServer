@@ -1,0 +1,15 @@
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Net::ClientServer::Server;
+
+Net::ClientServer::Server->serve(
+    port => 8012,
+    run => sub {
+        my $client = shift;
+        $client->print( "Yoink $0!\n" );
+        $client->close;
+    },
+);
