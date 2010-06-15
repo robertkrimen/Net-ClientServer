@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 use Dzpl
     name => 'Net-ClientServer',
-    version => '0.0001',
+    version => '0.0005',
     author => 'Robert Krimen <robertkrimen@gmail.com>',
     license => 'Perl5',
     copyright => 'Robert Krimen',

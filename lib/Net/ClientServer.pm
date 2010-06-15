@@ -1,12 +1,72 @@
 package Net::ClientServer;
-# ABSTRACT: A single platform for launching servers and connecting clients
+# ABSTRACT: Implement a basic client/server architecture using a single platform
 
 use strict;
 use warnings;
 
-#use Net::ClientServer::Server::FIFO;
-#use Net::ClientServer::Server::Fork;
-#use Net::ClientServer::Server::Prefork;
+=head1 SYNOPSIS
+
+The minimum configuration (specify a port): 
+
+    my $platform = Net::ClientServer->new( port => 8020 );
+
+    $platform->server_socket;
+
+    ...
+
+    if ( $platform->started ) { # Will attempt to connect to the listening socket
+        $platform->client_socket;
+    }
+
+Save server state to disk:
+
+    $platform = Net::ClientServer->new( port => 8020, name => 'net-client-server' );
+    # Server pid will be stored in $HOME/.net-client-server/pid
+    # On daemonization, stderr will be outputted to $HOME/.net-client-server/stderr
+
+With a basic startup & serve/accept routine:
+
+    my $port = 8020;
+    $platform = Net::ClientServer->new(
+        port => $port,
+        start => sub {
+            print STDERR "Server listening on $port\n";
+        },
+        serve => sub {
+            my $client = shift; # The client socket
+            $client->print( "Hello, World.\n" );
+        },
+    );
+
+    $platform->start;
+    
+=head1 DESCRIPTION
+
+Met::ClientServer is a tool for implementing a basic client/server architecture using a single platform. It is easily configured for daemonizing and maintaining state on disk (pidfile & stderr).
+
+The minimum configuration is very simple, requiring only a port number:
+
+    my $platform = Net::ClientServer->new( port => 8020 );
+    $platform->server_socket;
+
+    ...
+
+    $platform->client_socket;
+
+
+=head1 USAGE
+
+The API is still young and pretty fluid. See the SYNOPSIS for examples (for now)
+
+Daemonization (via C<< ->start >>) is on by default, disable it with: C<< daemon => 0 >>
+
+=head1 SEE ALSO
+
+L<Net::Server>
+
+L<Daemon::Daemonize>
+
+=cut
 
 use Any::Moose;
 
@@ -29,7 +89,7 @@ sub _daemon_options { }
 has server => qw/ is rw isa HashRef /;
 sub _server_options {
     my $self = shift;
-    return %{ $self->server };
+    return %{ $self->server || {}  };
 };
 
 sub BUILD {
@@ -84,9 +144,7 @@ sub _build_home {
     }
     unless ( @dir ) {
         my $name;
-        if ( $name = $self->name ) {
-#        croak "Missing name for home (home == 1)" unless my $name = $self->name;
-        }
+        if ( $name = $self->name ) { }
         else {
             my $port = $self->port;
             croak "Missing name for home (home == 1)" if $port =~ m/\D/;
@@ -146,6 +204,7 @@ sub client_socket {
 
 sub pid {
     my $self = shift;
+    return 0 unless $self->pidfile;
     return check_pidfile( $self->pidfile );
 }
 
@@ -233,7 +292,7 @@ sub serve {
 
     for (qw/ start stop serve run /) {
         my $routine = "${_}_routine";
-        next unless my $code = $self->routine;
+        next unless my $code = $self->$routine;
         $server_options{$_} ||= sub { $code->( @_, $platform ) };
     }
     Net::ClientServer::Server->serve( host => $self->host, port => $self->port, %server_options );
