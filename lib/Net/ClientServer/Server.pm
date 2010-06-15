@@ -29,7 +29,7 @@ sub serve {
     my $self = shift;
     my %options = @_;
 
-    my ( $start, $stop, $run ) = delete @options{qw/ start stop run /};
+    my ( $start, $stop, $serve ) = delete @options{qw/ start stop serve /};
 
     $start->() if $start;
 
@@ -50,7 +50,8 @@ sub serve {
                 next;
             }
             else {
-                $run->( $client );
+                $SIG{CHLD} = 'DEFAULT';
+                $serve->( $client );
                 $client->close;
                 exit;
             }
@@ -58,7 +59,7 @@ sub serve {
     }
     else {
         while( my $client = $listen->accept ) {
-            $run->( $client );
+            $serve->( $client );
             $client->close;
         }
     }

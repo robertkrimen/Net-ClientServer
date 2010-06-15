@@ -5,9 +5,13 @@ use warnings;
 
 use Net::ClientServer::Server;
 
+my $port = 8012;
 Net::ClientServer::Server->serve(
-    port => 8012,
-    run => sub {
+    port => $port,
+    start => sub {
+        STDERR->print( "Listening to :", $port, "\n" );
+    },
+    serve => sub {
         my $client = shift;
         $client->print( "Yoink $0!\n" );
         $client->close;

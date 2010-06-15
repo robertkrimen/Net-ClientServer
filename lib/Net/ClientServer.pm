@@ -10,7 +10,7 @@ use warnings;
 
 use Any::Moose;
 
-use Daemon::Daemonize qw/ write_pidfile check_pidfile delete_pidfile /;
+use Daemon::Daemonize qw/ write_pidfile check_pidfile /;
 use Path::Class;
 use IO::Socket::INET;
 use File::HomeDir;
@@ -21,8 +21,11 @@ use Net::ClientServer::Server;
 has host => qw/ is ro /;
 has port => qw/ is ro required 1 /;
 
+has [ map { "${_}_routine" } qw/ start stop serve run / ] => qw/ is rw isa Maybe[CodeRef] /;
+
 has daemon => qw/ is rw default 1 /;
 sub _daemon_options { }
+
 has server => qw/ is rw isa HashRef /;
 sub _server_options {
     my $self = shift;
@@ -32,70 +35,97 @@ sub _server_options {
 sub BUILD {
     my $self = shift;
     my $given = shift;
+
     my $file_default = 1;
-    $file_default = 0 if $given->{fileless};
-    $self->_given_pid_file( $file_default ) unless $self->has_pid_file;
-    $self->_given_stderr_file( $file_default ) unless $self->has_stderr_file;
+    $file_default = 0 unless $given->{home} || $given->{name};
+    $self->_default_pidfile( $file_default );
+    $self->_default_stderr( $file_default );
+
+    for (qw/ start stop serve run /) {
+        my $routine = "${_}_routine";
+        next unless $given->{$_};
+        if ( $given->{$routine} ) {
+            carp "Given $routine AND $_ as options";
+            next;
+        }
+        $self->$routine( $given->{$_} );
+    }
 }
 
-for my $field (qw/ name home pid_file stderr_file /) {
-    my $given = "_given_$field";
+for my $field (qw/ name home pidfile stderr /) {
+    my $data = "_data_$field";
     my $built = "_built_$field";
     my $build = "_build_$field";
     my $reset = "_reset_$field";
-    has $given => qw/ is rw /, init_arg => $field, predicate => "has_$field";
+    has $data => qw/ is rw /, init_arg => $field, predicate => "has_$field";
     has $built => qw/ is ro lazy  1 /, clearer => $reset, builder => $build;
     __PACKAGE__->meta->add_method( $field => sub {
         my $self = shift;
         if ( @_ ) {
-            $self->$given( $_[0] );
+            $self->$data( $_[0] );
             $self->$reset;
         }
         return $self->$built;
     } );
 }
 
-sub _build_name { return $_[0]->_given_name }
+for my $field (qw/ pidfile stderr /) {
+    my $default = "_default_$field";
+    has $default => qw/ is rw /;
+}
+
+sub _build_name { return $_[0]->_data_name }
 sub _build_home {
     my $self = shift;
     my @dir;
     if ( $self->has_home ) {
-        return unless my $home = $self->_given_home;
+        return unless my $home = $self->_data_home;
         push @dir, $home if $home ne 1;
     }
     unless ( @dir ) {
-        croak "Missing name for home" unless my $name = $self->name;
+        my $name;
+        if ( $name = $self->name ) {
+#        croak "Missing name for home (home == 1)" unless my $name = $self->name;
+        }
+        else {
+            my $port = $self->port;
+            croak "Missing name for home (home == 1)" if $port =~ m/\D/;
+            $self->name( join '-', 'net-client-server', $port );
+            $name = $self->name;
+        }
         push @dir, File::HomeDir->my_home, join '', ".$name";
     }
     return dir( @dir )->absolute;
 }
-sub _yield_field {
+sub _yield_file_field {
     my $self = shift;
     my $field = shift;
     my $default = shift;
 
-    my $given = "_given_$field";
+    my $data = "_data_$field";
     my $has = "has_$field";
+    my $_default = "_default_$field"; # Default from during construction
     
-    my $file = 1;
-    $file = $self->$given if $self->$has;;
-    return unless defined $file;
+    my $file = $self->$_default;
+    $file = $self->$data if $self->$has;
+    return undef unless $file; # O, '', undef => No file
     $file = $default if $file eq '1';
     if      ( $file =~ m/^\// )     {}
     elsif   ( $file =~ m/^\.\// )   {}
     else {
-        croak "Missing home for $field" unless $self->has_home || $self->has_name;
-        $file = $self->home->file( $file )
+        croak "Missing home for $field"
+            unless ( ($self->has_home || $self->has_name ) && $self->home );
+        $file = $self->home->file( $file );
     }
     return file( $file )->absolute;
 }
-sub _build_pid_file {
+sub _build_pidfile {
     my $self = shift;
-    return $self->_yield_field( 'pid_file', 'pid' );
+    return $self->_yield_file_field( 'pidfile', 'pid' );
 }
-sub _build_stderr_file {
+sub _build_stderr {
     my $self = shift;
-    return $self->_yield_field( 'stderr_file', 'stderr' );
+    return $self->_yield_file_field( 'stderr', 'stderr' );
 }
 
 #open(STDERR,"|/bin/logger -t \"${PROGNAME}[$$]: STDERR\"") or die "Error: Unable to redirect STDERR to logger!";
@@ -116,13 +146,13 @@ sub client_socket {
 
 sub pid {
     my $self = shift;
-    return check_pidfile( $self->pid_file );
+    return check_pidfile( $self->pidfile );
 }
 
-sub delete_pid {
+sub delete_pidfile {
     my $self = shift;
-    return unless $self->has_pid_file && ( my $pid_file = $self->pid_file );
-    delete_pidfile( $pid_file );
+    return unless $self->has_pidfile && ( my $pidfile = $self->pidfile );
+    Daemon::Daemonize::delete_pidfile( $pidfile );
 }
 
 sub started {
@@ -156,15 +186,15 @@ sub daemonize {
 
     push @daemon_arguments, chdir => undef, close => 1;
 
-    if ( $self->has_stderr_file && ( my $stderr_file = $self->stderr_file ) ) {
-        $self->_file_mkdir( $stderr_file );
-        push @daemon_arguments, stderr => $stderr_file;
+    if ( $self->has_stderr && ( my $stderr = $self->stderr ) ) {
+        $self->_file_mkdir( $stderr );
+        push @daemon_arguments, stderr => $stderr;
     }
 
-    my $pid_file;
-    if ( $self->has_pid_file && ( $pid_file = $self->pid_file ) ) {
-        $self->_file_mkdir( $pid_file );
-        push @daemon_arguments, pid_file => $pid_file;
+    my $pidfile;
+    if ( $self->has_pidfile && ( $pidfile = $self->pidfile ) ) {
+        $self->_file_mkdir( $pidfile );
+        push @daemon_arguments, pidfile => $pidfile;
     }
 
     my %daemon = $self->_daemon_options;
@@ -178,9 +208,9 @@ sub daemonize {
     else { 
         $run = $_run unless $run;
         push @daemon_arguments, run => sub {
-            if ( $pid_file ) {
-                write_pidfile( $pid_file );
-                $SIG{TERM} = $SIG{INT} = sub { delete_pidfile( $pid_file ) }
+            if ( $pidfile ) {
+                write_pidfile( $pidfile );
+                $SIG{TERM} = $SIG{INT} = sub { Daemon::Daemonize::delete_pidfile( $pidfile ) }
             }
             $run->( $platform );
         };
@@ -190,8 +220,8 @@ sub daemonize {
 
     Daemon::Daemonize->daemonize( chdir => undef, close => 1, @daemon_arguments );
 
-    if ( $pid_file ) {
-        do { sleep 1 } until -s $pid_file;
+    if ( $pidfile ) {
+        do { sleep 1 } until -s $pidfile;
     }
 }
 
@@ -201,9 +231,10 @@ sub serve {
     my $platform = $self;
     my %server_options = $self->_server_options;
 
-    for (qw/ start stop run /) {
-        next unless my $code = $server_options{$_};
-        $server_options{$_} = sub { $code->( @_, $platform ) };
+    for (qw/ start stop serve run /) {
+        my $routine = "${_}_routine";
+        next unless my $code = $self->routine;
+        $server_options{$_} ||= sub { $code->( @_, $platform ) };
     }
     Net::ClientServer::Server->serve( host => $self->host, port => $self->port, %server_options );
 }
