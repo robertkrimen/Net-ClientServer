@@ -10,7 +10,8 @@ use Dzpl
         Any::Moose
         Path::Class
         Daemon::Daemonize
-        Net::Server
+        File::HomeDir
+        IO::Socket::INET
 
         [Test]
         Test::Most
