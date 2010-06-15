@@ -116,11 +116,8 @@ has [ map { "${_}_routine" } qw/ start stop serve run / ] => qw/ is rw isa Maybe
 has daemon => qw/ is rw default 1 /;
 sub _daemon_options { }
 
-has server => qw/ is rw isa HashRef /;
-sub _server_options {
-    my $self = shift;
-    return %{ $self->server || {}  };
-};
+has _server_options => qw/ is rw isa HashRef lazy_build 1  /;
+sub _build__server_options { {} }
 
 sub BUILD {
     my $self = shift;
@@ -140,6 +137,8 @@ sub BUILD {
         }
         $self->$routine( $given->{$_} );
     }
+
+    $self->_server_options->{fork} = 1 if $given->{fork};
 }
 
 for my $field (qw/ name home pidfile stderr /) {
@@ -163,6 +162,8 @@ for my $field (qw/ pidfile stderr /) {
     my $default = "_default_$field";
     has $default => qw/ is rw /;
 }
+
+sub _with_home { return $_[0]->name || ( $_[0]->has_home && $_[0]->home ) }
 
 sub _build_name { return $_[0]->_data_name }
 sub _build_home {
@@ -297,13 +298,13 @@ sub daemonize {
 
     push @daemon_arguments, chdir => undef, close => 1;
 
-    if ( $self->has_stderr && ( my $stderr = $self->stderr ) ) {
+    if ( ( $self->_with_home || $self->has_stderr ) && ( my $stderr = $self->stderr ) ) {
         $self->_file_mkdir( $stderr );
         push @daemon_arguments, stderr => $stderr;
     }
 
     my $pidfile;
-    if ( $self->has_pidfile && ( $pidfile = $self->pidfile ) ) {
+    if ( ( $self->_with_home || $self->has_pidfile ) && ( $pidfile = $self->pidfile ) ) {
         $self->_file_mkdir( $pidfile );
         push @daemon_arguments, pidfile => $pidfile;
     }
@@ -340,7 +341,7 @@ sub serve {
     my $self = shift;
 
     my $platform = $self;
-    my %server_options = $self->_server_options;
+    my %server_options = %{ $self->_server_options };
 
     for (qw/ start stop serve run /) {
         my $routine = "${_}_routine";
